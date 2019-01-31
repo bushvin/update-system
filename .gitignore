@@ -1,4 +1,4 @@
-.gitgnore
+.gitignore
 *.retry
 **.retry
 test-*.yml
