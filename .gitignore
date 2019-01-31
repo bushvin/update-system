@@ -1,7 +1,0 @@
-.gitignore
-*.retry
-**.retry
-test-*.yml
-inventory
-inventory/*
-
