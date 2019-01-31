@@ -1,0 +1,31 @@
+---
+- name: Get current time
+  setup:
+    gather_subset: '!all,!min,date_time'
+  register: role_file_backup_date_time
+  delegate_to: localhost
+  run_once: yes
+
+
+- name: Check source
+  stat:
+    path: '{{ item.source }}'
+  register: role_file_backup_test_source
+  loop: '{{ role_file_backup }}'
+
+- name: Create target directory
+  file:
+    path: '{{ item.destination }}'
+    mode: '{{ item.mode|default(omit) }}'
+    owner: '{{ item.owner|default(omit) }}'
+    group: '{{ item.group|default(omit) }}'
+    state: directory
+  loop: '{{ role_file_backup }}'
+ 
+- name: Create backup
+  archive:
+    path: '{{ item.item.source }}'
+    dest: '{{ item.item.destination }}/{{ item.item.source|regex_replace("[/\s]\+","-") }}-{{ role_file_backup_date_time.ansible_facts.ansible_date_time.iso8601_basic_short }}.gz'
+    format: gz
+  loop: '{{ role_file_backup_test_source.results }}'
+  when: item.stat.exists

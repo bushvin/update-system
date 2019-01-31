@@ -1,0 +1,5 @@
+---
+role_lvm_snapshot_filesystems:
+    - mount: '/'
+      snapshot_size: 1G
+

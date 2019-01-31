@@ -1,0 +1,141 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+# (c) 2019, William Leemans <willie@elaba.net>
+
+# This file is part of Ansible
+#
+# Ansible is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# Ansible is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with Ansible.  If not, see <http://www.gnu.org/licenses/>.
+
+ANSIBLE_METADATA = {
+        'metadata_version': '1.0',
+        'status': ['preview'],
+        'supported_by': 'community'
+}
+DOCUMENTATION = '''
+---
+module: stat_mount
+short_description: Get information about a mountpoint
+description:
+  - Retrieve information about a linux mounpoint
+version_added: "2.7"
+options:
+  path:
+    description:
+      - Mountpoint path
+      - This value will automatically be resolved to the nearest mountpoint
+    required: true
+    default: null
+
+notes:
+  - Tested on Fedora 29, CentOS 7.6
+  - Requires root privileges to obtain LVM related information
+'''
+
+EXAMPLES = r'''
+- name: Get information about /
+  stat_mount:
+    path: '/'
+'''
+
+import re
+import os
+import json
+import stat
+from distutils.spawn import find_executable
+
+from ansible.module_utils.basic import *
+
+def main():
+    module = AnsibleModule(
+        argument_spec = dict(
+            path = dict(required=True, default=None)
+        ),
+        supports_check_mode = True
+    )
+
+    path = module.params['path']
+    result = dict()
+    result['changed'] = False
+    result['stat_mount'] = get_mountpointinfo( path, module )
+    lvm = get_lvminfo(result['stat_mount']['device'], module)
+    if lvm is not False:
+        result['stat_mount'].update({'lvm':lvm, 'is_lv': True})
+
+    module.exit_json(**result)
+
+def get_mountpointinfo( path, module ):
+
+    mountpointinfo = dict()
+    mountpointinfo['path'] = path
+    path = os.path.abspath(path)
+    while not os.path.ismount(path):
+        path = os.path.dirname(path)
+    mountpointinfo['mountpoint'] = path
+    with open("/proc/mounts","r") as f:
+        for l in f:
+            t = l.split(" ")
+            if path == t[1]:
+                mountpointinfo['device'] = t[0]
+                mountpointinfo['fs_type'] = t[2]
+                mountpointinfo['fs_options'] = t[3].split(",")
+                mountpointinfo['fs_freq'] = t[4]
+                mountpointinfo['fs_passno'] = t[5].rstrip()
+    try:
+        os.stat(os.path.abspath(mountpointinfo['device'] ))
+    except:
+        mountpointinfo['is_local'] = False
+    else:
+        mountpointinfo['is_local'] = True
+        devstat = os.stat(os.path.abspath(mountpointinfo['device']))
+        if stat.S_ISBLK(devstat.st_mode):
+            mountpointinfo['is_blk'] = True
+        else:
+            mountpointinfo['is_blk'] = False
+
+    return mountpointinfo
+
+def get_lvminfo( device, module ):
+    if os.geteuid() != 0:
+        return { 'msg': 'root is required to get LVM information' }
+    if find_executable('lvs') is None:
+        return False
+    lvminfo = dict()
+    lvminfo['snapshots'] = []
+    
+    (rc, stdout, stderr) = module.run_command(['lvs','--reportformat','json','-o','lv_name,lv_path,vg_name,lv_size,lv_attr,origin'])
+    if rc == 0:
+        lvs = json.loads(stdout)
+        # let's find the LV
+        for lv in lvs['report'][0]['lv']:
+            if os.path.realpath(device) == os.path.realpath(lv['lv_path']):
+                lvminfo.update(lv)
+        try:
+            lvminfo['lv_name']
+        except:
+            return False
+        if all(el in lvminfo.keys() for el in ['lv_attr', 'lv_name']) and lvminfo['lv_attr'][6] == 's':
+        #if 'lv_attr' in lvminfo.keys() and lvminfo['lv_attr'][6] == 's':
+            for snap in lvs['report'][0]['lv']: 
+                if snap['lv_attr'][0] == 's' and snap['origin'] == lvminfo['lv_name']:
+                    lvminfo['snapshots'].append(snap)
+
+    else:
+        module.fail_json(msg="Could not execute command",stdout=stdout,stderr=stderr)
+    return lvminfo
+
+
+if __name__ == "__main__":
+    main()
+

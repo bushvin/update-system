@@ -1,0 +1,105 @@
+---
+- name: Detect all yum repositories
+  shell: >
+      echo "[";
+      yum repolist all -v --quiet | awk '/^Repo-(id|status)/' | 
+      sed 's|Repo-id      : \([^/]\+\).*$|{ "name": "\1",|g;s|Repo-status  : \(.*\)$|"status": "\1" },|g' |
+      tr "\n" " " ;
+      echo "]"
+  args:
+    warn: no
+  changed_when: no
+  check_mode: no
+  register: t_repolist
+
+- name: Detect installonly limit
+  shell: >
+      sed 's/#.*$//g' /etc/yum.conf | awk -F= '/^\s*installonly_limit/{print $2}'
+  args:
+    warn: no
+  changed_when: no
+  check_mode: no
+  register: t_installonly_limit
+
+- name: Create list of installed packages
+  yum:
+    list: installed
+  register: t_package_list
+
+- name: Create yum facts
+  set_fact:
+    t_yum_repolist: '{{ t_repolist.stdout }}'
+    t_yum_installonly_limit: '{{ 3 if t_installonly_limit.stdout_lines|length !=1 else t_installonly_limit.stdout }}'
+
+- name: Update yum facts
+  set_fact:
+    t_yum_enable_repos: '{{ t_yum_repolist|json_query("[*].name") if "*" in role_yum_enable_repos|list else role_yum_enable_repos|list|intersect(t_yum_repolist|json_query("[*].name")) }}'
+    t_yum_disable_repos: '{{ t_yum_repolist|json_query("[*].name") if "*" in role_yum_disable_repos|list else role_yum_disable_repos|list|intersect(t_yum_repolist|json_query("[*].name")) }}'
+
+- name: Validate repos and packages
+  assert:
+    that:
+      - t_yum_enable_repos|length == 0 and t_yum_disable_repos|length == 0 or t_yum_enable_repos|length > 0 and t_yum_disable_repos|length > 0
+
+- block:
+  - name: Generate yum package list
+    set_fact:
+      t_yum_yum_packages: '{{ t_package_list.results|to_json|from_json|json_query("[?starts_with(name,`yum`)].name")|list|unique }}'
+
+  - name: Update yum
+    yum:
+      name: '{{ t_yum_yum_packages }}'
+      exclude: '{{ role_yum_exclude_packages|list }}'
+      update_cache: yes
+      state: latest
+      enablerepo: '{{ t_yum_enable_repos }}'
+      disablerepo: '{{ t_yum_disable_repos }}'
+  when: role_yum_update_yum|bool
+
+- block:
+  - name: Generate kernel package list
+    set_fact:
+      t_yum_kernel_packages: '{{ t_package_list.results|to_json|from_json|json_query("[?starts_with(name,`kernel`)].name")|list|unique }}'
+
+  - name: Update kernel
+    yum:
+      name: '{{ t_yum_kernel_packages }}'
+      exclude: '{{ role_yum_exclude_packages|list }}'
+      state: latest
+      update_cache: yes
+      enablerepo: '{{ t_yum_enable_repos }}'
+      disablerepo: '{{ t_yum_disable_repos }}'
+    register: t_update_kernel
+
+  - name: Purge old kernels
+    command: >
+        /bin/package-cleanup --oldkernels --count={{ role_yum_kernel_keep|int }} -y
+    when: 
+      - t_update_kernel.changed
+      - role_yum_kernel_keep|int > 1
+      - role_yum_kernel_keep|int < t_yum_installonly_limit|int
+
+  when: role_yum_update_kernel|bool
+
+- block:
+  - name: Update all
+    yum:
+      name: '{{ "*" if "*" in role_yum_update_packages else role_yum_update_packages }}'
+      exclude: '{{ role_yum_exclude_packages|list }}'
+      security: no
+      update_cache: yes
+      enablerepo: '{{ t_yum_enable_repos }}'
+      disablerepo: '{{ t_yum_disable_repos }}'
+  when: not role_yum_update_security_only|bool
+
+- block:
+  - name: Update security
+    yum:
+      name: '{{ "*" if "*" in role_yum_update_packages else role_yum_update_packages }}'
+      exclude: '{{ role_yum_exclude_packages|list }}'
+      security: yes
+      update_cache: yes
+      enablerepo: '{{ t_yum_enable_repos }}'
+      disablerepo: '{{ t_yum_disable_repos }}'
+  when: role_yum_update_security_only|bool
+

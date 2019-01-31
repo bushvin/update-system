@@ -1,0 +1,7 @@
+.gitgnore
+*.retry
+**.retry
+test-*.yml
+inventory
+inventory/*
+

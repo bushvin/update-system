@@ -1,0 +1,33 @@
+---
+- name: Get current time
+  setup:
+    gather_subset: '!all,!min,date_time'
+  register: role_lvm_date_time
+  delegate_to: localhost
+  run_once: yes
+
+- name: Check filesystems for lvm
+  stat_mount:
+      path: '{{ item.mount }}'
+  register: role_lvm_filesystem_test
+  loop: '{{ role_lvm_snapshot_filesystems|list }}'
+
+- name: Remove old snapshots
+  lvol:
+      vg: '{{ item.vg_name }}'
+      lv: '{{ item.lv_name }}'
+      state: absent
+      force: yes
+  loop: '{{ role_lvm_filesystem_test|json_query("results[?stat_mount.lvm.snapshots].stat_mount.lvm.snapshots[]") }}'
+  when: item.lv_name[-24:] != ( '-yum-snapshot-' + role_lvm_date_time.ansible_facts.ansible_date_time.date )
+
+- name: Create new snapshot
+  lvol:
+      vg: '{{ item.lvm.vg_name }}'
+      lv: '{{ item.lvm.lv_name }}'
+      snapshot: '{{ item.lvm.lv_name }}-yum-snapshot-{{ role_lvm_date_time.ansible_facts.ansible_date_time.date }}'
+      size: '{{ item.item.snapshot_size }}'
+  loop: '{{ role_lvm_filesystem_test|json_query("results[?stat_mount.is_lv==`true`].{item: item, lvm: stat_mount.lvm}") }}'
+  when: item.lvm.lv_name + '-yum-snapshot-' + role_lvm_date_time.ansible_facts.ansible_date_time.date not in role_lvm_filesystem_test|json_query("results[?stat_mount.lvm.snapshots].stat_mount.lvm.snapshots[].lv_name")
+
+

@@ -1,0 +1,9 @@
+---
+role_yum_enable_repos: []
+role_yum_disable_repos: []
+role_yum_update_packages: []
+role_yum_exclude_packages: []
+role_yum_update_yum: True
+role_yum_update_kernel: True
+role_yum_update_security_only: False
+role_yum_kernel_keep: 0

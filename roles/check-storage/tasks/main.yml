@@ -1,0 +1,15 @@
+---
+- name: Get disk information
+  setup:
+    gather_subset: '!all,!min,mounts'
+  register: role_check_storage_free_mounts
+
+- name: find mounts
+  set_fact:
+    role_check_storage_failed: '{{ role_check_storage_file_mounts + [ item ] }}'
+  loop: '{{ role_check_storage_free_mounts.ansible_facts.ansible_mounts }}'
+  when: 
+    - item.mount in role_check_storage_free|json_query("[].mount")
+    - ( (role_check_storage_free|json_query("[?mount==`" + item.mount + "`].free")|first)[-1:] != '%' and item.size_available < role_check_storage_free|json_query("[?mount==`" + item.mount + "`].free")|first|human_to_bytes ) or
+      ( (role_check_storage_free|json_query("[?mount==`" + item.mount + "`].free")|first)[-1:] == '%' and item.size_available < item.size_total/100*(role_check_storage_free|json_query("[?mount==`" + item.mount + "`].free")|first)[:-1]|int )
+
